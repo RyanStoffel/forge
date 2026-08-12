@@ -55,6 +55,7 @@ fn is_homebrew_install(path: &Path) -> bool {
     components
         .windows(2)
         .any(|pair| pair[0] == "Cellar" && pair[1] == "forge")
+        || components.contains(&"Forge.app")
 }
 
 pub fn check() -> Result<Option<Release>> {
@@ -285,12 +286,15 @@ mod tests {
         assert!(is_homebrew_install(Path::new(
             "/usr/local/Cellar/forge/0.1.0/bin/forge"
         )));
+        assert!(is_homebrew_install(Path::new(
+            "/Applications/Forge.app/Contents/MacOS/forge"
+        )));
     }
 
     #[test]
     fn does_not_treat_direct_binary_as_homebrew_installation() {
         assert!(!is_homebrew_install(Path::new(
-            "/Applications/Forge.app/Contents/MacOS/forge"
+            "/Applications/Forge Preview/Contents/MacOS/forge"
         )));
         assert!(!is_homebrew_install(Path::new("/Users/test/bin/forge")));
     }

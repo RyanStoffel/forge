@@ -81,20 +81,36 @@ The binary owns presentation and input routing. Reusable engines remain independ
 
 ## Getting started
 
-### Install with Homebrew
+### Install the macOS app with Homebrew
 
 ```bash
-brew install RyanStoffel/forge/forge
+brew tap RyanStoffel/forge
+brew install --cask forge
 ```
 
-This adds the [`RyanStoffel/forge`](https://github.com/RyanStoffel/homebrew-forge) tap and installs the correct macOS binary for Apple Silicon or Intel. To update:
+Forge is installed as `/Applications/Forge.app`, appears in Finder and Spotlight, and remains launchable from a terminal:
+
+```bash
+open -a Forge
+# or
+forge
+```
+
+If you previously installed the command-line-only formula, migrate once:
+
+```bash
+brew uninstall forge
+brew install --cask RyanStoffel/forge/forge
+```
+
+To update:
 
 ```bash
 brew update
-brew upgrade forge
+brew upgrade --cask forge
 ```
 
-Homebrew-managed installations update through `brew upgrade`; Forge disables its in-app executable replacement when it detects a Homebrew Cellar path.
+Homebrew-managed installations update through `brew upgrade`; Forge disables its in-app executable replacement when it detects a Homebrew installation.
 
 ### Requirements
 
@@ -134,7 +150,7 @@ When a newer revision is available, Forge shows an update action at the bottom o
 
 This edge channel matches the project's current work-in-progress stage. Production distribution still requires app bundling, code signing, notarization, rollback hardening, and a stable release channel.
 
-The Homebrew formula follows the same edge release. After both macOS binaries publish successfully, release automation updates the tap with the new source revision and architecture-specific checksums.
+The Homebrew cask follows the same edge release. After both architecture-specific app bundles publish successfully, release automation updates the tap with the new source revision and checksums. App bundles are currently ad-hoc signed but not yet Developer ID signed or notarized; macOS may require **System Settings → Privacy & Security → Open Anyway** on first launch.
 
 ## Roadmap
 

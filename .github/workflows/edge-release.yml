@@ -32,11 +32,21 @@ jobs:
           cargo build --locked --release -p forge --target x86_64-apple-darwin
       - name: Prepare release assets
         run: |
-          mkdir -p dist
+          version="$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' Cargo.toml | head -n 1)"
+          mkdir -p dist package/aarch64 package/x86_64
           cp target/aarch64-apple-darwin/release/forge dist/forge-aarch64-apple-darwin
           cp target/x86_64-apple-darwin/release/forge dist/forge-x86_64-apple-darwin
-          shasum -a 256 dist/forge-aarch64-apple-darwin > dist/forge-aarch64-apple-darwin.sha256
-          shasum -a 256 dist/forge-x86_64-apple-darwin > dist/forge-x86_64-apple-darwin.sha256
+          FORGE_BINARY=target/aarch64-apple-darwin/release/forge \
+            FORGE_VERSION="$version" FORGE_REVISION="$GITHUB_SHA" \
+            OUTPUT_DIR=package/aarch64 bash scripts/package-macos-app.sh
+          FORGE_BINARY=target/x86_64-apple-darwin/release/forge \
+            FORGE_VERSION="$version" FORGE_REVISION="$GITHUB_SHA" \
+            OUTPUT_DIR=package/x86_64 bash scripts/package-macos-app.sh
+          ditto -c -k --sequesterRsrc --keepParent package/aarch64/Forge.app dist/Forge-aarch64-apple-darwin.zip
+          ditto -c -k --sequesterRsrc --keepParent package/x86_64/Forge.app dist/Forge-x86_64-apple-darwin.zip
+          for asset in dist/forge-*-apple-darwin dist/Forge-*-apple-darwin.zip; do
+            shasum -a 256 "$asset" > "$asset.sha256"
+          done
       - name: Publish edge release
         run: |
           if gh release view edge >/dev/null 2>&1; then
@@ -63,30 +73,43 @@ jobs:
         run: |
           {
             echo "version=$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' Cargo.toml | head -n 1)"
-            echo "arm64_sha256=$(cut -d ' ' -f 1 dist/forge-aarch64-apple-darwin.sha256)"
-            echo "x86_64_sha256=$(cut -d ' ' -f 1 dist/forge-x86_64-apple-darwin.sha256)"
+            echo "binary_arm64_sha256=$(cut -d ' ' -f 1 dist/forge-aarch64-apple-darwin.sha256)"
+            echo "binary_x86_64_sha256=$(cut -d ' ' -f 1 dist/forge-x86_64-apple-darwin.sha256)"
+            echo "app_arm64_sha256=$(cut -d ' ' -f 1 dist/Forge-aarch64-apple-darwin.zip.sha256)"
+            echo "app_x86_64_sha256=$(cut -d ' ' -f 1 dist/Forge-x86_64-apple-darwin.zip.sha256)"
           } >> "$GITHUB_OUTPUT"
-      - name: Generate formula
+      - name: Generate Homebrew artifacts
         env:
           FORGE_REVISION: ${{ github.sha }}
           FORGE_VERSION: ${{ steps.release.outputs.version }}
-          ARM64_SHA256: ${{ steps.release.outputs.arm64_sha256 }}
-          X86_64_SHA256: ${{ steps.release.outputs.x86_64_sha256 }}
+          ARM64_SHA256: ${{ steps.release.outputs.binary_arm64_sha256 }}
+          X86_64_SHA256: ${{ steps.release.outputs.binary_x86_64_sha256 }}
           FORMULA_PATH: generated/forge.rb
+          CASK_PATH: generated/cask-forge.rb
         run: |
           mkdir -p generated
           bash scripts/update-homebrew-formula.sh
-      - name: Publish formula through GitHub
+          ARM64_SHA256="${{ steps.release.outputs.app_arm64_sha256 }}" \
+            X86_64_SHA256="${{ steps.release.outputs.app_x86_64_sha256 }}" \
+            bash scripts/update-homebrew-cask.sh
+      - name: Publish Homebrew artifacts through GitHub
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          current_sha="$(gh api repos/RyanStoffel/homebrew-forge/contents/Formula/forge.rb --jq .sha 2>/dev/null || true)"
-          jq -n \
-            --arg message "forge: update edge to ${GITHUB_SHA::7}" \
-            --arg content "$(base64 -w 0 generated/forge.rb)" \
-            --arg sha "$current_sha" \
-            'if $sha == "" then {message: $message, content: $content} else {message: $message, content: $content, sha: $sha} end' \
-            > formula-update.json
-          gh api repos/RyanStoffel/homebrew-forge/contents/Formula/forge.rb \
-            --method PUT \
-            --input formula-update.json
+          publish_file() {
+            local source="$1"
+            local destination="$2"
+            local current_sha
+            current_sha="$(gh api "repos/RyanStoffel/homebrew-forge/contents/$destination" --jq .sha 2>/dev/null || true)"
+            jq -n \
+              --arg message "forge: update edge to ${GITHUB_SHA::7}" \
+              --arg content "$(base64 -w 0 "$source")" \
+              --arg sha "$current_sha" \
+              'if $sha == "" then {message: $message, content: $content} else {message: $message, content: $content, sha: $sha} end' \
+              > artifact-update.json
+            gh api "repos/RyanStoffel/homebrew-forge/contents/$destination" \
+              --method PUT \
+              --input artifact-update.json
+          }
+          publish_file generated/forge.rb Formula/forge.rb
+          publish_file generated/cask-forge.rb Casks/forge.rb

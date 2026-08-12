@@ -24,6 +24,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Test Homebrew formula updater
         run: bash scripts/test-update-homebrew-formula.sh
+      - name: Test macOS app and cask packaging
+        run: bash scripts/test-macos-packaging.sh
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
