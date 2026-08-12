@@ -30,5 +30,7 @@ CASK_PATH="${temporary}/forge.rb" \
   bash "${script_dir}/update-homebrew-cask.sh"
 
 ruby -c "${temporary}/forge.rb" >/dev/null
-grep -F 'version "1.2.3-edge.abcdef1"' "${temporary}/forge.rb" >/dev/null
+grep -F 'cask "forge-app"' "${temporary}/forge.rb" >/dev/null
+grep -F 'version "1.2.3,abcdef1"' "${temporary}/forge.rb" >/dev/null
+grep -F 'releases/download/edge-#{version.csv.second}/Forge-aarch64-apple-darwin.zip' "${temporary}/forge.rb" >/dev/null
 grep -F 'app "Forge.app"' "${temporary}/forge.rb" >/dev/null
