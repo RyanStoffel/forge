@@ -49,7 +49,7 @@ Forge already provides a usable native application shell:
 | Processes | Pane-scoped process inspection | Process actions and richer resource history |
 | Agents | Any CLI agent can run in a terminal pane; a dedicated agent surface exists | Structured adapters, attention states, notifications, and task board |
 | GitHub | Native device-flow OAuth sign-in, Keychain token storage, a dedicated Profile tab, and Git credential linking | Issue/PR surfaces linked to workspaces |
-| Updates | Signed-checksum edge-release detection, bottom-left prompt, in-place install, and restart | Signed/notarized app bundles and stable channels |
+| Updates | Signed-checksum edge-release detection with bottom-left prompt; self-installs and restarts for direct binaries, shows a copy-to-clipboard `brew upgrade` notice for the Homebrew app | Signed/notarized app bundles and stable channels |
 
 The central thesis is already testable: terminal work, code editing, project navigation, and Git operations can happen in one fast native window. Agent orchestration and the task board are the next major product layer.
 

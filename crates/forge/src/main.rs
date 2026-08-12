@@ -494,6 +494,9 @@ enum UpdateState {
     Checking,
     Current,
     Available(updater::Release),
+    /// A newer edge release exists, but Homebrew owns this installation, so
+    /// Forge only surfaces a read-only notice instead of an install button.
+    HomebrewUpdateAvailable(updater::Release),
     Installing,
     Failed(String),
 }
@@ -625,7 +628,7 @@ impl Forge {
             github_state: GitHubState::Checking,
             github_sign_in_task: None,
             github_avatar: None,
-            update_state: if updater::updates_enabled() {
+            update_state: if updater::checks_enabled() {
                 UpdateState::Checking
             } else {
                 UpdateState::Disabled
@@ -824,7 +827,7 @@ impl Forge {
     }
 
     fn check_for_updates(&mut self, cx: &mut Context<Self>) {
-        if !updater::updates_enabled() {
+        if !updater::checks_enabled() {
             self.update_state = UpdateState::Disabled;
             return;
         }
@@ -833,7 +836,13 @@ impl Forge {
             let result = cx.background_spawn(async move { updater::check() }).await;
             let _ = this.update(cx, |forge, cx| {
                 forge.update_state = match result {
-                    Ok(Some(release)) => UpdateState::Available(release),
+                    Ok(Some(release)) => {
+                        if updater::self_install_enabled() {
+                            UpdateState::Available(release)
+                        } else {
+                            UpdateState::HomebrewUpdateAvailable(release)
+                        }
+                    }
                     Ok(None) => UpdateState::Current,
                     Err(error) => UpdateState::Failed(error.to_string()),
                 };
@@ -2294,6 +2303,34 @@ impl Forge {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|this, _, _, cx| this.install_update(cx)),
+                    )
+                    .into_any_element(),
+            ),
+            UpdateState::HomebrewUpdateAvailable(release) => Some(
+                div()
+                    .id("homebrew-update-notice")
+                    .flex()
+                    .items_center()
+                    .min_w(px(0.0))
+                    .h(px(30.0))
+                    .px(px(theme::space::MD))
+                    .rounded(px(theme::radius::SM))
+                    .cursor_pointer()
+                    .truncate()
+                    .text_size(px(theme::font_size::SM))
+                    .text_color(theme::color(theme::status::DONE))
+                    .hover(|style| style.bg(theme::color(theme::surface::HOVER)))
+                    .child(format!(
+                        "Update available ({}) — click to copy `brew upgrade`",
+                        &release.revision[..release.revision.len().min(7)]
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_, _, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                "brew upgrade --cask forge-app".to_string(),
+                            ));
+                        }),
                     )
                     .into_any_element(),
             ),

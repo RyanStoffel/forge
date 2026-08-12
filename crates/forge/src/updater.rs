@@ -37,7 +37,23 @@ struct ApiAsset {
     browser_download_url: String,
 }
 
-pub fn updates_enabled() -> bool {
+/// Whether Forge should check the `edge` release feed at all. A local `dev`
+/// build has no meaningful revision to compare against, so it stays quiet
+/// unless a developer explicitly opts in with `FORGE_FORCE_UPDATE`.
+///
+/// This is intentionally independent of [`self_install_enabled`]: a
+/// Homebrew-managed install still benefits from knowing a newer release
+/// exists, even though Forge must never replace its own executable when
+/// Homebrew owns it.
+pub fn checks_enabled() -> bool {
+    std::env::var_os("FORGE_FORCE_UPDATE").is_some() || BUILD_REVISION != "dev"
+}
+
+/// Whether Forge may download and replace its own running executable.
+/// False for Homebrew-managed installs (`Cellar/forge`, `Caskroom`-installed
+/// `Forge.app`): Homebrew owns those binaries' lifecycle, so Forge only
+/// surfaces a read-only notice for them instead (see `checks_enabled`).
+pub fn self_install_enabled() -> bool {
     if std::env::var_os("FORGE_FORCE_UPDATE").is_some() {
         return true;
     }
@@ -59,7 +75,7 @@ fn is_homebrew_install(path: &Path) -> bool {
 }
 
 pub fn check() -> Result<Option<Release>> {
-    if !updates_enabled() || std::env::var_os("FORGE_DISABLE_UPDATES").is_some() {
+    if !checks_enabled() || std::env::var_os("FORGE_DISABLE_UPDATES").is_some() {
         return Ok(None);
     }
 
@@ -77,6 +93,11 @@ pub fn check() -> Result<Option<Release>> {
 }
 
 pub fn install(release: &Release) -> Result<()> {
+    if !self_install_enabled() {
+        return Err(anyhow!(
+            "Homebrew owns this installation; run `brew upgrade --cask forge-app` instead"
+        ));
+    }
     let expected_checksum = download_text(&release.checksum_url)?
         .split_whitespace()
         .next()
@@ -276,6 +297,23 @@ mod tests {
         let mut release = api_release("123456789");
         release.assets.pop();
         assert!(release_from_api(release, "abcdef123").is_err());
+    }
+
+    #[test]
+    fn install_refuses_to_run_when_self_install_is_disabled() {
+        // Under `cargo test`, `FORGE_BUILD_SHA` is unset, so `BUILD_REVISION`
+        // is "dev" and `self_install_enabled()` is false (the same state a
+        // Homebrew-managed install reports). `install` must refuse before
+        // touching the network or the filesystem.
+        assert!(!self_install_enabled());
+        let release = Release {
+            tag: "edge".into(),
+            revision: "123456789".into(),
+            download_url: "https://example.test/forge".into(),
+            checksum_url: "https://example.test/forge.sha256".into(),
+            page_url: "https://github.com/RyanStoffel/forge/releases/tag/edge".into(),
+        };
+        assert!(install(&release).is_err());
     }
 
     #[test]
