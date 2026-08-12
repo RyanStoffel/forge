@@ -49,8 +49,9 @@ jobs:
           done
       - name: Publish edge releases
         run: |
+          version="$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' Cargo.toml | head -n 1)"
           short_sha="${GITHUB_SHA::7}"
-          immutable_tag="edge-$short_sha"
+          immutable_tag="forge-app-$version-edge.$short_sha"
           if gh release view edge >/dev/null 2>&1; then
             gh release edit edge --target "$GITHUB_SHA" --title "Forge Edge" --notes "Automated edge build from $GITHUB_SHA."
             gh release upload edge dist/* --clobber
