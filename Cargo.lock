@@ -1777,6 +1777,7 @@ dependencies = [
  "futures",
  "gpui",
  "objc",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2 0.10.9",

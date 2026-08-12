@@ -43,7 +43,7 @@ use gpui::{
     StyledText, TextAlign, TextRun, Timer, TitlebarOptions, UniformListScrollHandle, Window,
     WindowBounds, WindowOptions,
 };
-use gpui::{point, svg};
+use gpui::{img, point, svg, Image, ImageFormat, ObjectFit};
 
 const ROWS: u16 = 45;
 const COLS: u16 = 160;
@@ -323,7 +323,10 @@ struct Forge {
     /// refresh loop, preserving the app's zero-wakeup idle behavior.
     process_task: Option<gpui::Task<()>>,
     github_state: GitHubState,
-    show_onboarding: bool,
+    /// Held only while a device-flow sign-in is in progress; dropping it
+    /// cancels the poll loop, which is how "Cancel" in the Profile tab works.
+    github_sign_in_task: Option<gpui::Task<()>>,
+    github_avatar: Option<Arc<Image>>,
     update_state: UpdateState,
 }
 
@@ -379,6 +382,7 @@ enum ViewMode {
     Terminal,
     Editor,
     Agents,
+    Profile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -479,8 +483,8 @@ enum GitHubState {
     Checking,
     SignedOut,
     SigningIn,
+    AwaitingDevice(github::DeviceAuthorization),
     Connected(github::Account),
-    Unavailable(String),
     Failed(String),
 }
 
@@ -619,13 +623,18 @@ impl Forge {
             processes: Vec::new(),
             process_task: None,
             github_state: GitHubState::Checking,
-            show_onboarding: !github::onboarding_completed(),
+            github_sign_in_task: None,
+            github_avatar: None,
             update_state: if updater::updates_enabled() {
                 UpdateState::Checking
             } else {
                 UpdateState::Disabled
             },
         };
+        if !github::onboarding_completed() {
+            this.active_view = ViewMode::Profile;
+            let _ = github::complete_onboarding();
+        }
         this.refresh_file_tree(cx);
         let all = (0..this.workspaces.workspaces.len()).collect();
         this.refresh_sidebar_meta(all, true, cx);
@@ -643,14 +652,12 @@ impl Forge {
             let _ = this.update(cx, |forge, cx| {
                 forge.github_state = match result {
                     Ok(github::AccountLookup::Connected(account)) => {
-                        forge.show_onboarding = false;
                         let _ = github::complete_onboarding();
+                        forge.refresh_avatar(cx);
                         GitHubState::Connected(account)
                     }
                     Ok(github::AccountLookup::SignedOut) => GitHubState::SignedOut,
-                    Ok(github::AccountLookup::Unavailable(message)) => {
-                        GitHubState::Unavailable(message)
-                    }
+                    Ok(github::AccountLookup::Failed(message)) => GitHubState::Failed(message),
                     Err(error) => GitHubState::Failed(error.to_string()),
                 };
                 cx.notify();
@@ -659,41 +666,161 @@ impl Forge {
         .detach();
     }
 
+    /// Runs GitHub's OAuth device flow end to end: request a code, show it,
+    /// poll until the browser step completes, then fetch the profile and
+    /// store the token. Kept cancellable by holding the `Task` in
+    /// `github_sign_in_task` — dropping it (see `cancel_github_sign_in`)
+    /// stops the poll loop at its next await point.
     fn begin_github_sign_in(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.github_state, GitHubState::SigningIn) {
+        if matches!(
+            self.github_state,
+            GitHubState::SigningIn | GitHubState::AwaitingDevice(_)
+        ) {
             return;
         }
-        self.show_onboarding = true;
         self.github_state = GitHubState::SigningIn;
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = cx.background_spawn(async move { github::sign_in() }).await;
+
+        let task = cx.spawn(async move |this, cx| {
+            let device = cx
+                .background_spawn(async move { github::request_device_authorization() })
+                .await;
+            let device = match device {
+                Ok(device) => device,
+                Err(error) => {
+                    let _ = this.update(cx, |forge, cx| {
+                        forge.github_sign_in_task = None;
+                        forge.github_state = GitHubState::Failed(error.to_string());
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+
+            let shown = this.update(cx, |forge, cx| {
+                forge.github_state = GitHubState::AwaitingDevice(device.clone());
+                cx.notify();
+            });
+            if shown.is_err() {
+                return;
+            }
+
+            let verification_uri = device.verification_uri.clone();
+            cx.background_spawn(async move { github::open_verification_uri(&verification_uri) })
+                .await;
+
+            let mut interval = device.interval;
+            let token = loop {
+                if Instant::now() >= device.expires_at {
+                    break Err(anyhow::anyhow!(
+                        "The one-time code expired. Try connecting again."
+                    ));
+                }
+                Timer::after(interval).await;
+                let device_code = device.device_code.clone();
+                let outcome = cx
+                    .background_spawn(async move { github::poll_device_token(&device_code) })
+                    .await;
+                match outcome {
+                    Ok(github::DevicePoll::Authorized(token)) => break Ok(token),
+                    Ok(github::DevicePoll::Pending) => continue,
+                    Ok(github::DevicePoll::SlowDown) => {
+                        interval += Duration::from_secs(5);
+                        continue;
+                    }
+                    Err(error) => break Err(error),
+                }
+            };
+
+            let token = match token {
+                Ok(token) => token,
+                Err(error) => {
+                    let _ = this.update(cx, |forge, cx| {
+                        forge.github_sign_in_task = None;
+                        forge.github_state = GitHubState::Failed(error.to_string());
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+
+            let result = cx
+                .background_spawn(async move { github::complete_sign_in(&token) })
+                .await;
             let _ = this.update(cx, |forge, cx| {
+                forge.github_sign_in_task = None;
                 forge.github_state = match result {
                     Ok(account) => {
-                        forge.show_onboarding = false;
                         let _ = github::complete_onboarding();
+                        forge.refresh_avatar(cx);
                         GitHubState::Connected(account)
                     }
                     Err(error) => GitHubState::Failed(error.to_string()),
                 };
                 cx.notify();
             });
+        });
+        self.github_sign_in_task = Some(task);
+    }
+
+    /// Stops an in-progress device-flow sign-in. Dropping the task cancels
+    /// its poll loop; GitHub expires the unused device code on its own.
+    fn cancel_github_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.github_sign_in_task = None;
+        self.github_state = GitHubState::SignedOut;
+        cx.notify();
+    }
+
+    fn sign_out_github(&mut self, cx: &mut Context<Self>) {
+        self.github_sign_in_task = None;
+        self.github_avatar = None;
+        self.github_state = GitHubState::Checking;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx.background_spawn(async move { github::sign_out() }).await;
+            let _ = this.update(cx, |forge, cx| {
+                forge.github_state = match result {
+                    Ok(()) => GitHubState::SignedOut,
+                    Err(error) => GitHubState::Failed(error.to_string()),
+                };
+                cx.notify();
+            });
         })
         .detach();
     }
 
-    fn dismiss_onboarding(&mut self, cx: &mut Context<Self>) {
-        self.show_onboarding = false;
-        if let Err(error) = github::complete_onboarding() {
-            self.github_state = GitHubState::Failed(error.to_string());
-        }
-        cx.notify();
-    }
-
-    fn open_onboarding(&mut self, cx: &mut Context<Self>) {
-        self.show_onboarding = true;
-        cx.notify();
+    /// Fetches the avatar bitmap for the connected account. Best-effort: a
+    /// failure here leaves the initials placeholder rather than blocking or
+    /// disturbing `github_state`.
+    fn refresh_avatar(&mut self, cx: &mut Context<Self>) {
+        let GitHubState::Connected(account) = &self.github_state else {
+            return;
+        };
+        let Some(url) = account.avatar_url.clone() else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let fetched = cx
+                .background_spawn(async move { github::fetch_avatar_bytes(&url) })
+                .await;
+            let Ok((content_type, bytes)) = fetched else {
+                return;
+            };
+            let format = match content_type.as_str() {
+                "image/jpeg" | "image/jpg" => ImageFormat::Jpeg,
+                "image/webp" => ImageFormat::Webp,
+                "image/gif" => ImageFormat::Gif,
+                "image/bmp" => ImageFormat::Bmp,
+                "image/tiff" => ImageFormat::Tiff,
+                _ => ImageFormat::Png,
+            };
+            let image = Arc::new(Image::from_bytes(format, bytes));
+            let _ = this.update(cx, |forge, cx| {
+                forge.github_avatar = Some(image);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn check_for_updates(&mut self, cx: &mut Context<Self>) {
@@ -1686,28 +1813,6 @@ impl Forge {
     ) {
         let ks = &event.keystroke;
 
-        if self.show_onboarding {
-            match ks.key.as_str() {
-                "escape" => self.dismiss_onboarding(cx),
-                "enter" if matches!(self.github_state, GitHubState::Connected(_)) => {
-                    self.dismiss_onboarding(cx)
-                }
-                "enter" if matches!(self.github_state, GitHubState::Unavailable(_)) => {
-                    self.refresh_github_account(cx)
-                }
-                "enter"
-                    if matches!(
-                        self.github_state,
-                        GitHubState::SignedOut | GitHubState::Failed(_)
-                    ) =>
-                {
-                    self.begin_github_sign_in(cx)
-                }
-                _ => {}
-            }
-            return;
-        }
-
         // Rename captures all input while active, so typing a name can't
         // leak through to the terminal.
         if self.renaming.is_some() {
@@ -1732,6 +1837,7 @@ impl Forge {
                 "1" => return self.set_active_view(ViewMode::Terminal, cx),
                 "2" => return self.set_active_view(ViewMode::Editor, cx),
                 "3" => return self.set_active_view(ViewMode::Agents, cx),
+                "4" => return self.set_active_view(ViewMode::Profile, cx),
                 "e" => return self.toggle_primary_view(cx),
                 "d" if ks.modifiers.shift => return self.split_active(Layout::Column, cx),
                 "d" => return self.split_active(Layout::Row, cx),
@@ -2119,19 +2225,39 @@ impl Forge {
     }
 
     fn render_sidebar_footer(&self, cx: &mut Context<Self>) -> AnyElement {
-        let (account_label, account_color) = match &self.github_state {
-            GitHubState::Checking => ("Checking GitHub…".to_string(), theme::text::DIM),
-            GitHubState::SignedOut => ("Connect GitHub".to_string(), theme::text::MUTED),
-            GitHubState::SigningIn => (
-                "Complete sign-in in browser…".to_string(),
-                theme::status::RUNNING,
-            ),
-            GitHubState::Connected(account) => (format!("@{}", account.login), theme::status::DONE),
-            GitHubState::Unavailable(_) => {
-                ("GitHub CLI required".to_string(), theme::status::ATTENTION)
+        let identity: AnyElement = match &self.github_state {
+            GitHubState::Connected(account) => div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .min_w(px(0.0))
+                .gap(px(theme::space::SM))
+                .child(render_avatar(
+                    self.github_avatar.as_ref(),
+                    &account.login,
+                    20.0,
+                ))
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .truncate()
+                        .text_size(px(theme::font_size::SM))
+                        .text_color(theme::color(theme::status::DONE))
+                        .child(format!("@{}", account.login)),
+                )
+                .into_any_element(),
+            GitHubState::Checking => sidebar_status_text("Checking GitHub…", theme::text::DIM),
+            GitHubState::SignedOut => {
+                sidebar_status_text("Sign in with GitHub", theme::text::MUTED)
+            }
+            GitHubState::SigningIn => {
+                sidebar_status_text("Starting sign-in…", theme::status::RUNNING)
+            }
+            GitHubState::AwaitingDevice(_) => {
+                sidebar_status_text("Enter the one-time code…", theme::status::RUNNING)
             }
             GitHubState::Failed(_) => {
-                ("GitHub connection failed".to_string(), theme::status::ERROR)
+                sidebar_status_text("GitHub connection failed", theme::status::ERROR)
             }
         };
 
@@ -2139,17 +2265,16 @@ impl Forge {
             .id("github-account")
             .flex()
             .items_center()
+            .min_w(px(0.0))
             .h(px(30.0))
             .px(px(theme::space::MD))
             .rounded(px(theme::radius::SM))
             .cursor_pointer()
-            .text_size(px(theme::font_size::SM))
-            .text_color(theme::color(account_color))
             .hover(|style| style.bg(theme::color(theme::surface::HOVER)))
-            .child(account_label)
+            .child(identity)
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _, _, cx| this.open_onboarding(cx)),
+                cx.listener(|this, _, _, cx| this.set_active_view(ViewMode::Profile, cx)),
             );
 
         let update = match &self.update_state {
@@ -2732,6 +2857,14 @@ impl Forge {
                 "Agents".into(),
                 ViewMode::Agents,
                 self.active_view == ViewMode::Agents,
+                cx,
+            ),
+            view_tab(
+                "view-profile",
+                "icons/user.svg",
+                "Profile".into(),
+                ViewMode::Profile,
+                self.active_view == ViewMode::Profile,
                 cx,
             ),
         ];
@@ -3427,52 +3560,53 @@ impl Forge {
             )
     }
 
-    fn render_onboarding(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let (title, detail, primary_label, primary_enabled) = match &self.github_state {
-            GitHubState::Checking => (
-                "Welcome to Forge",
-                "Checking whether GitHub is already connected…".to_string(),
-                "Checking…",
-                false,
-            ),
-            GitHubState::SignedOut => (
-                "One workspace for the whole job",
-                "Connect GitHub to link Git credentials, repositories, issues, and pull requests without leaving Forge.".to_string(),
-                "Connect GitHub",
-                true,
-            ),
-            GitHubState::SigningIn => (
-                "Finish in your browser",
-                "Forge opened GitHub's secure device flow and copied the one-time code. Complete the browser prompt; Forge will finish Git setup automatically.".to_string(),
-                "Waiting for GitHub…",
-                false,
-            ),
-            GitHubState::Connected(account) => (
-                "GitHub connected",
-                format!(
-                    "{} is ready. Forge uses the GitHub CLI credential store and never reads or stores your token.",
-                    account.name.as_deref().unwrap_or(&account.login)
-                ),
-                "Start using Forge",
-                true,
-            ),
-            GitHubState::Unavailable(message) => (
-                "GitHub CLI required",
-                message.clone(),
-                "Check again",
-                true,
-            ),
-            GitHubState::Failed(message) => (
-                "GitHub connection failed",
-                message.clone(),
-                "Try again",
-                true,
-            ),
+    fn render_profile(&self, cx: &mut Context<Self>) -> AnyElement {
+        let content = match &self.github_state {
+            GitHubState::Connected(account) => {
+                let account = account.clone();
+                self.render_profile_connected(&account, cx)
+            }
+            GitHubState::AwaitingDevice(device) => {
+                let device = device.clone();
+                self.render_profile_device_code(&device, cx)
+            }
+            _ => self.render_profile_sign_in(cx),
         };
-        let show_secondary = !matches!(self.github_state, GitHubState::Connected(_));
+
+        div()
+            .id("profile-view")
+            .flex()
+            .flex_1()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(32.0))
+            .child(
+                div()
+                    .w(px(480.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(theme::space::XL))
+                    .child(content),
+            )
+            .into_any_element()
+    }
+
+    fn render_profile_sign_in(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (primary_label, primary_enabled): (&str, bool) = match &self.github_state {
+            GitHubState::Checking => ("Checking…", false),
+            GitHubState::SigningIn => ("Starting sign-in…", false),
+            _ => ("Sign in with GitHub", true),
+        };
+        let error = match &self.github_state {
+            GitHubState::Failed(message) => Some(message.clone()),
+            _ => None,
+        };
 
         let primary = div()
-            .id("onboarding-primary")
+            .id("profile-sign-in")
             .flex()
             .items_center()
             .justify_center()
@@ -3496,86 +3630,209 @@ impl Forge {
                     .hover(|style| style.bg(theme::color(theme::accent::HOVER)))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, _, cx| {
-                            if matches!(this.github_state, GitHubState::Connected(_)) {
-                                this.dismiss_onboarding(cx);
-                            } else if matches!(this.github_state, GitHubState::Unavailable(_)) {
-                                this.refresh_github_account(cx);
-                            } else {
-                                this.begin_github_sign_in(cx);
-                            }
-                        }),
+                        cx.listener(|this, _, _, cx| this.begin_github_sign_in(cx)),
                     )
             })
             .child(primary_label);
 
-        let secondary = show_secondary.then(|| {
-            div()
-                .id("onboarding-skip")
-                .flex()
-                .items_center()
-                .justify_center()
-                .h(px(36.0))
-                .px(px(theme::space::LG))
-                .rounded(px(theme::radius::MD))
-                .cursor_pointer()
-                .text_size(px(theme::font_size::SM))
-                .text_color(theme::color(theme::text::MUTED))
-                .hover(|style| style.bg(theme::color(theme::surface::HOVER)))
-                .child("Continue without GitHub")
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| this.dismiss_onboarding(cx)),
-                )
-        });
-
         div()
-            .id("onboarding-overlay")
-            .absolute()
-            .top(px(0.0))
-            .left(px(0.0))
-            .w_full()
-            .h_full()
             .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgba(0x0a0b0ce6))
+            .flex_col()
+            .gap(px(theme::space::XL))
             .child(
                 div()
-                    .w(px(520.0))
                     .flex()
                     .flex_col()
-                    .gap(px(theme::space::XL))
-                    .p(px(32.0))
-                    .bg(theme::color(theme::surface::OVERLAY))
-                    .border_1()
-                    .border_color(theme::color(theme::border::DEFAULT))
-                    .rounded(px(theme::radius::LG))
+                    .gap(px(theme::space::SM))
                     .child(
                         div()
                             .text_size(px(22.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(theme::color(theme::text::DEFAULT))
-                            .child(title),
+                            .child("Sign in to GitHub"),
                     )
                     .child(
                         div()
                             .text_size(px(theme::font_size::MD))
                             .line_height(px(21.0))
                             .text_color(theme::color(theme::text::MUTED))
-                            .child(detail),
-                    )
+                            .child(
+                                "Connect a GitHub account to link Git credentials for \
+                                 github.com and show your identity across Forge. New to \
+                                 GitHub? You can create an account during sign-in.",
+                            ),
+                    ),
+            )
+            .children(error.map(|message| {
+                div()
+                    .p(px(theme::space::MD))
+                    .rounded(px(theme::radius::MD))
+                    .bg(theme::color(theme::danger::SURFACE))
+                    .border_1()
+                    .border_color(theme::color(theme::danger::BORDER))
+                    .text_size(px(theme::font_size::SM))
+                    .text_color(theme::color(theme::danger::TEXT))
+                    .child(message)
+            }))
+            .child(primary)
+            .into_any_element()
+    }
+
+    fn render_profile_device_code(
+        &self,
+        device: &github::DeviceAuthorization,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let cancel = div()
+            .id("profile-cancel-sign-in")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(36.0))
+            .px(px(theme::space::LG))
+            .rounded(px(theme::radius::MD))
+            .cursor_pointer()
+            .text_size(px(theme::font_size::SM))
+            .text_color(theme::color(theme::text::MUTED))
+            .hover(|style| style.bg(theme::color(theme::surface::HOVER)))
+            .child("Cancel")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.cancel_github_sign_in(cx)),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(theme::space::XL))
+            .child(
+                div()
+                    .text_size(px(22.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::color(theme::text::DEFAULT))
+                    .child("Finish in your browser"),
+            )
+            .child(
+                div()
+                    .text_size(px(theme::font_size::MD))
+                    .line_height(px(21.0))
+                    .text_color(theme::color(theme::text::MUTED))
+                    .child(format!(
+                        "Forge opened {} — enter the code below to connect your account.",
+                        device.verification_uri
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .py(px(theme::space::XL))
+                    .rounded(px(theme::radius::LG))
+                    .bg(theme::color(theme::surface::INSET))
+                    .border_1()
+                    .border_color(theme::color(theme::border::DEFAULT))
+                    .font(mono_font())
+                    .text_size(px(28.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme::color(theme::text::DEFAULT))
+                    .child(device.user_code.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(theme::font_size::SM))
+                    .text_color(theme::color(theme::status::RUNNING))
+                    .child("Waiting for you to authorize Forge on GitHub…"),
+            )
+            .child(cancel)
+            .into_any_element()
+    }
+
+    fn render_profile_connected(
+        &self,
+        account: &github::Account,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let display_name = account
+            .name
+            .clone()
+            .unwrap_or_else(|| account.login.clone());
+
+        let sign_out = div()
+            .id("profile-sign-out")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(36.0))
+            .px(px(theme::space::LG))
+            .rounded(px(theme::radius::MD))
+            .cursor_pointer()
+            .border_1()
+            .border_color(theme::color(theme::border::DEFAULT))
+            .text_size(px(theme::font_size::SM))
+            .text_color(theme::color(theme::text::MUTED))
+            .hover(|style| {
+                style
+                    .bg(theme::color(theme::danger::SURFACE))
+                    .text_color(theme::color(theme::status::ERROR))
+            })
+            .child("Sign out")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| this.sign_out_github(cx)),
+            );
+
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(theme::space::XL))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(theme::space::LG))
+                    .child(render_avatar(
+                        self.github_avatar.as_ref(),
+                        &account.login,
+                        64.0,
+                    ))
                     .child(
                         div()
                             .flex()
-                            .flex_row()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(theme::space::MD))
-                            .children(secondary)
-                            .child(primary),
+                            .flex_col()
+                            .gap(px(theme::space::XXS))
+                            .child(
+                                div()
+                                    .text_size(px(20.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme::color(theme::text::DEFAULT))
+                                    .child(display_name),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(theme::font_size::MD))
+                                    .text_color(theme::color(theme::text::MUTED))
+                                    .child(format!("@{}", account.login)),
+                            ),
                     ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(theme::space::SM))
+                    .p(px(theme::space::LG))
+                    .rounded(px(theme::radius::MD))
+                    .bg(theme::color(theme::surface::INSET))
+                    .border_1()
+                    .border_color(theme::color(theme::border::SUBTLE))
+                    .text_size(px(theme::font_size::SM))
+                    .text_color(theme::color(theme::text::MUTED))
+                    .child("Connected with GitHub OAuth. The token lives only in your macOS Keychain.")
+                    .child("Git operations over HTTPS for github.com authenticate through Forge's credential helper."),
+            )
+            .child(sign_out)
+            .into_any_element()
     }
 }
 
@@ -5086,6 +5343,44 @@ fn author_initials(author: &str) -> String {
         .collect()
 }
 
+/// A round avatar thumbnail, or an initials placeholder while the bitmap is
+/// still loading (or failed to load) — never blocks on the network.
+fn render_avatar(image: Option<&Arc<Image>>, login: &str, size: f32) -> AnyElement {
+    let content = match image {
+        Some(image) => img(image.clone())
+            .size(px(size))
+            .object_fit(ObjectFit::Cover)
+            .into_any_element(),
+        None => div()
+            .size(px(size))
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme::color(theme::surface::ACTIVE))
+            .text_size(px((size * 0.42).max(8.0)))
+            .text_color(theme::color(theme::text::MUTED))
+            .child(author_initials(login))
+            .into_any_element(),
+    };
+    div()
+        .size(px(size))
+        .flex_shrink_0()
+        .overflow_hidden()
+        .rounded(px(size / 2.0))
+        .child(content)
+        .into_any_element()
+}
+
+fn sidebar_status_text(text: &'static str, color: u32) -> AnyElement {
+    div()
+        .min_w(px(0.0))
+        .truncate()
+        .text_size(px(theme::font_size::SM))
+        .text_color(theme::color(color))
+        .child(text)
+        .into_any_element()
+}
+
 fn git_change_color(change: forge_git::Change) -> u32 {
     match change {
         forge_git::Change::Added => theme::git::ADDED,
@@ -5302,6 +5597,7 @@ fn next_primary_view(active: ViewMode) -> ViewMode {
         ViewMode::Terminal => ViewMode::Editor,
         ViewMode::Editor => ViewMode::Agents,
         ViewMode::Agents => ViewMode::Terminal,
+        ViewMode::Profile => ViewMode::Terminal,
     }
 }
 
@@ -5362,6 +5658,7 @@ impl Render for Forge {
                 ViewMode::Terminal => self.render_terminal().into_any_element(),
                 ViewMode::Editor => self.render_editor(cx).into_any_element(),
                 ViewMode::Agents => self.render_agents(),
+                ViewMode::Profile => self.render_profile(cx),
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -5370,7 +5667,6 @@ impl Render for Forge {
         let show_info_panel = self.show_info_panel;
         let info_panel = show_info_panel.then(|| self.render_info_panel(cx));
         let palette = self.palette_open.then(|| self.render_palette(cx));
-        let onboarding = self.show_onboarding.then(|| self.render_onboarding(cx));
         let workspace_resize_handle = self
             .show_workspace_sidebar
             .then(|| self.render_resize_handle(ResizeSide::Workspace, cx));
@@ -5412,8 +5708,7 @@ impl Render for Forge {
                     .children(info_panel_resize_handle)
                     .children(info_panel),
             )
-            .children(palette)
-            .children(onboarding);
+            .children(palette);
 
         if let (Some(stats), Some(start)) = (self.frame_stats.as_mut(), render_start) {
             stats.record(start.elapsed());
@@ -5443,6 +5738,9 @@ fn print_version_if_requested() -> bool {
 fn main() {
     if print_version_if_requested() {
         return;
+    }
+    if let Some(code) = github::run_git_credential_helper() {
+        std::process::exit(code);
     }
     Application::new()
         .with_assets(assets::Assets)
@@ -5501,6 +5799,7 @@ mod tests {
         assert_eq!(next_primary_view(ViewMode::Terminal), ViewMode::Editor);
         assert_eq!(next_primary_view(ViewMode::Editor), ViewMode::Agents);
         assert_eq!(next_primary_view(ViewMode::Agents), ViewMode::Terminal);
+        assert_eq!(next_primary_view(ViewMode::Profile), ViewMode::Terminal);
     }
 
     #[test]

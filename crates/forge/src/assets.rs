@@ -75,6 +75,7 @@ const ICONS: &[(&str, &[u8])] = &[
     ),
     ("icons/undo.svg", include_bytes!("../assets/icons/undo.svg")),
     ("icons/x.svg", include_bytes!("../assets/icons/x.svg")),
+    ("icons/user.svg", include_bytes!("../assets/icons/user.svg")),
 ];
 
 impl AssetSource for Assets {
