@@ -38,7 +38,23 @@ struct ApiAsset {
 }
 
 pub fn updates_enabled() -> bool {
-    BUILD_REVISION != "dev" || std::env::var_os("FORGE_FORCE_UPDATE").is_some()
+    if std::env::var_os("FORGE_FORCE_UPDATE").is_some() {
+        return true;
+    }
+    BUILD_REVISION != "dev"
+        && std::env::current_exe()
+            .map(|path| !is_homebrew_install(&path))
+            .unwrap_or(true)
+}
+
+fn is_homebrew_install(path: &Path) -> bool {
+    let components = path
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    components
+        .windows(2)
+        .any(|pair| pair[0] == "Cellar" && pair[1] == "forge")
 }
 
 pub fn check() -> Result<Option<Release>> {
@@ -259,5 +275,23 @@ mod tests {
         let mut release = api_release("123456789");
         release.assets.pop();
         assert!(release_from_api(release, "abcdef123").is_err());
+    }
+
+    #[test]
+    fn detects_homebrew_cellar_installation() {
+        assert!(is_homebrew_install(Path::new(
+            "/opt/homebrew/Cellar/forge/0.1.0-edge.abcdef1/bin/forge"
+        )));
+        assert!(is_homebrew_install(Path::new(
+            "/usr/local/Cellar/forge/0.1.0/bin/forge"
+        )));
+    }
+
+    #[test]
+    fn does_not_treat_direct_binary_as_homebrew_installation() {
+        assert!(!is_homebrew_install(Path::new(
+            "/Applications/Forge.app/Contents/MacOS/forge"
+        )));
+        assert!(!is_homebrew_install(Path::new("/Users/test/bin/forge")));
     }
 }

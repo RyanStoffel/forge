@@ -45,3 +45,48 @@ jobs:
           else
             gh release create edge dist/* --prerelease --target "$GITHUB_SHA" --title "Forge Edge" --notes "Automated edge builds from main."
           fi
+
+  tap:
+    name: Update Homebrew tap
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download published checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download edge --repo "$GITHUB_REPOSITORY" --pattern '*.sha256' --dir dist
+      - name: Read release metadata
+        id: release
+        run: |
+          {
+            echo "version=$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' crates/forge/Cargo.toml | head -n 1)"
+            echo "arm64_sha256=$(cut -d ' ' -f 1 dist/forge-aarch64-apple-darwin.sha256)"
+            echo "x86_64_sha256=$(cut -d ' ' -f 1 dist/forge-x86_64-apple-darwin.sha256)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Generate formula
+        env:
+          FORGE_REVISION: ${{ github.sha }}
+          FORGE_VERSION: ${{ steps.release.outputs.version }}
+          ARM64_SHA256: ${{ steps.release.outputs.arm64_sha256 }}
+          X86_64_SHA256: ${{ steps.release.outputs.x86_64_sha256 }}
+          FORMULA_PATH: generated/forge.rb
+        run: |
+          mkdir -p generated
+          scripts/update-homebrew-formula.sh
+      - name: Publish formula through GitHub
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          current_sha="$(gh api repos/RyanStoffel/homebrew-forge/contents/Formula/forge.rb --jq .sha 2>/dev/null || true)"
+          jq -n \
+            --arg message "forge: update edge to ${GITHUB_SHA::7}" \
+            --arg content "$(base64 -w 0 generated/forge.rb)" \
+            --arg sha "$current_sha" \
+            'if $sha == "" then {message: $message, content: $content} else {message: $message, content: $content, sha: $sha} end' \
+            > formula-update.json
+          gh api repos/RyanStoffel/homebrew-forge/contents/Formula/forge.rb \
+            --method PUT \
+            --input formula-update.json

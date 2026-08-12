@@ -22,6 +22,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Test Homebrew formula updater
+        run: scripts/test-update-homebrew-formula.sh
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test

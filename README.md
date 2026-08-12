@@ -81,6 +81,21 @@ The binary owns presentation and input routing. Reusable engines remain independ
 
 ## Getting started
 
+### Install with Homebrew
+
+```bash
+brew install RyanStoffel/forge/forge
+```
+
+This adds the [`RyanStoffel/forge`](https://github.com/RyanStoffel/homebrew-forge) tap and installs the correct macOS binary for Apple Silicon or Intel. To update:
+
+```bash
+brew update
+brew upgrade forge
+```
+
+Homebrew-managed installations update through `brew upgrade`; Forge disables its in-app executable replacement when it detects a Homebrew Cellar path.
+
 ### Requirements
 
 - macOS
@@ -118,6 +133,8 @@ Every push to `main` builds both Apple Silicon and Intel macOS binaries and refr
 When a newer revision is available, Forge shows an update action at the bottom of the workspace sidebar. Selecting it downloads the architecture-matched binary, verifies its digest, atomically replaces the executable, and restarts Forge.
 
 This edge channel matches the project's current work-in-progress stage. Production distribution still requires app bundling, code signing, notarization, rollback hardening, and a stable release channel.
+
+The Homebrew formula follows the same edge release. After both macOS binaries publish successfully, release automation updates the tap with the new source revision and architecture-specific checksums.
 
 ## Roadmap
 

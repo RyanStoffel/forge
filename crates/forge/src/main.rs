@@ -5422,7 +5422,28 @@ impl Render for Forge {
     }
 }
 
+fn version_text() -> String {
+    format!(
+        "forge {} ({})",
+        env!("CARGO_PKG_VERSION"),
+        updater::BUILD_REVISION
+    )
+}
+
+fn print_version_if_requested() -> bool {
+    let requested = std::env::args_os().nth(1).is_some_and(|argument| {
+        argument == std::ffi::OsStr::new("--version") || argument == std::ffi::OsStr::new("-V")
+    });
+    if requested {
+        println!("{}", version_text());
+    }
+    requested
+}
+
 fn main() {
+    if print_version_if_requested() {
+        return;
+    }
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
@@ -5462,6 +5483,18 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_includes_package_and_build_revision() {
+        assert_eq!(
+            version_text(),
+            format!(
+                "forge {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                updater::BUILD_REVISION
+            )
+        );
+    }
 
     #[test]
     fn primary_view_toggle_round_trips_even_without_an_open_file() {
