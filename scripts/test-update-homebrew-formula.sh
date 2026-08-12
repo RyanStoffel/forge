@@ -10,7 +10,7 @@ FORGE_VERSION="1.2.3" \
 ARM64_SHA256="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
 X86_64_SHA256="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
 FORMULA_PATH="${temporary}" \
-  "${script_dir}/update-homebrew-formula.sh"
+  bash "${script_dir}/update-homebrew-formula.sh"
 
 ruby -c "${temporary}" >/dev/null
 grep -F 'version "1.2.3-edge.abcdef1"' "${temporary}" >/dev/null
