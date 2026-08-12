@@ -33,5 +33,5 @@ ruby -c "${temporary}/forge.rb" >/dev/null
 grep -F 'cask "forge-app"' "${temporary}/forge.rb" >/dev/null
 grep -F 'version "1.2.3-edge.abcdef1"' "${temporary}/forge.rb" >/dev/null
 grep -F 'releases/download/forge-app-#{version}/Forge-aarch64-apple-darwin.zip' "${temporary}/forge.rb" >/dev/null
-grep -F 'depends_on macos: ">= :monterey"' "${temporary}/forge.rb" >/dev/null
+grep -F 'depends_on macos: :monterey' "${temporary}/forge.rb" >/dev/null
 grep -F 'app "Forge.app"' "${temporary}/forge.rb" >/dev/null
