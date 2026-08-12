@@ -58,7 +58,7 @@ jobs:
           else
             gh release create edge dist/* --prerelease --target "$GITHUB_SHA" --title "Forge Edge" --notes "Automated edge builds from main."
           fi
-          gh release create "$immutable_tag" dist/Forge-* --prerelease --target "$GITHUB_SHA" \
+          gh release create "$immutable_tag" dist/Forge-* --target "$GITHUB_SHA" \
             --title "Forge Edge $short_sha" --notes "Immutable app artifacts for Homebrew."
 
   tap:

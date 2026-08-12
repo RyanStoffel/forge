@@ -30,6 +30,8 @@ cask "forge-app" do
     skip "Forge app casks follow the project's continuously published edge channel"
   end
 
+  depends_on macos: ">= :monterey"
+
   app "Forge.app"
   binary "#{appdir}/Forge.app/Contents/MacOS/forge"
 
