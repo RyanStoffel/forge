@@ -10,16 +10,16 @@ set -euo pipefail
 short_revision="${FORGE_REVISION:0:7}"
 
 cat >"${CASK_PATH}" <<CASK
-cask "forge" do
+cask "forge-app" do
   version "${FORGE_VERSION}-edge.${short_revision}"
 
   on_arm do
     sha256 "${ARM64_SHA256}"
-    url "https://github.com/RyanStoffel/forge/releases/download/edge/Forge-aarch64-apple-darwin.zip"
+    url "https://github.com/RyanStoffel/forge/releases/download/edge-${short_revision}/Forge-aarch64-apple-darwin.zip"
   end
   on_intel do
     sha256 "${X86_64_SHA256}"
-    url "https://github.com/RyanStoffel/forge/releases/download/edge/Forge-x86_64-apple-darwin.zip"
+    url "https://github.com/RyanStoffel/forge/releases/download/edge-${short_revision}/Forge-x86_64-apple-darwin.zip"
   end
 
   name "Forge"

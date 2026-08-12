@@ -85,7 +85,7 @@ The binary owns presentation and input routing. Reusable engines remain independ
 
 ```bash
 brew tap RyanStoffel/forge
-brew install --cask forge
+brew install --cask forge-app
 ```
 
 Forge is installed as `/Applications/Forge.app`, appears in Finder and Spotlight, and remains launchable from a terminal:
@@ -99,15 +99,15 @@ forge
 If you previously installed the command-line-only formula, migrate once:
 
 ```bash
-brew uninstall forge
-brew install --cask RyanStoffel/forge/forge
+brew uninstall --formula RyanStoffel/forge/forge
+brew install --cask RyanStoffel/forge/forge-app
 ```
 
 To update:
 
 ```bash
 brew update
-brew upgrade --cask forge
+brew upgrade --cask forge-app
 ```
 
 Homebrew-managed installations update through `brew upgrade`; Forge disables its in-app executable replacement when it detects a Homebrew installation.
