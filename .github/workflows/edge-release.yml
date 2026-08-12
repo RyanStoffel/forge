@@ -62,7 +62,7 @@ jobs:
         id: release
         run: |
           {
-            echo "version=$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' crates/forge/Cargo.toml | head -n 1)"
+            echo "version=$(sed -n 's/^version = \"\([^\"]*\)\"/\1/p' Cargo.toml | head -n 1)"
             echo "arm64_sha256=$(cut -d ' ' -f 1 dist/forge-aarch64-apple-darwin.sha256)"
             echo "x86_64_sha256=$(cut -d ' ' -f 1 dist/forge-x86_64-apple-darwin.sha256)"
           } >> "$GITHUB_OUTPUT"
