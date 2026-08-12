@@ -1,0 +1,8 @@
+[package]
+name = "forge-editor"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+ropey = "1"

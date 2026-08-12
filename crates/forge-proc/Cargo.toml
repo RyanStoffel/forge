@@ -1,0 +1,8 @@
+[package]
+name = "forge-proc"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+sysinfo = "0.39"

@@ -1,0 +1,10 @@
+[package]
+name = "forge-workspace"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+forge-terminal = { path = "../forge-terminal" }
+forge-git = { path = "../forge-git" }
+anyhow = { workspace = true }

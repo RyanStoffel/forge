@@ -1,0 +1,8 @@
+[package]
+name = "forge-files"
+edition.workspace = true
+version.workspace = true
+publish = false
+
+[dependencies]
+ignore = "0.4"

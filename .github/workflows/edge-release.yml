@@ -1,0 +1,47 @@
+name: Edge release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: edge-release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish macOS edge release
+    runs-on: macos-14
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FORGE_BUILD_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build macOS binaries
+        run: |
+          cargo build --locked --release -p forge --target aarch64-apple-darwin
+          cargo build --locked --release -p forge --target x86_64-apple-darwin
+      - name: Prepare release assets
+        run: |
+          mkdir -p dist
+          cp target/aarch64-apple-darwin/release/forge dist/forge-aarch64-apple-darwin
+          cp target/x86_64-apple-darwin/release/forge dist/forge-x86_64-apple-darwin
+          shasum -a 256 dist/forge-aarch64-apple-darwin > dist/forge-aarch64-apple-darwin.sha256
+          shasum -a 256 dist/forge-x86_64-apple-darwin > dist/forge-x86_64-apple-darwin.sha256
+      - name: Publish edge release
+        run: |
+          if gh release view edge >/dev/null 2>&1; then
+            gh release edit edge --target "$GITHUB_SHA" --title "Forge Edge" --notes "Automated edge build from $GITHUB_SHA."
+            gh release upload edge dist/* --clobber
+          else
+            gh release create edge dist/* --prerelease --target "$GITHUB_SHA" --title "Forge Edge" --notes "Automated edge builds from main."
+          fi
