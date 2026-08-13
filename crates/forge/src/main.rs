@@ -2236,26 +2236,33 @@ impl Forge {
 
     fn render_sidebar_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         let identity: AnyElement = match &self.github_state {
-            GitHubState::Connected(account) => div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .min_w(px(0.0))
-                .gap(px(theme::space::SM))
-                .child(render_avatar(
-                    self.github_avatar.as_ref(),
-                    &account.login,
-                    20.0,
-                ))
-                .child(
-                    div()
-                        .min_w(px(0.0))
-                        .truncate()
-                        .text_size(px(theme::font_size::SM))
-                        .text_color(theme::color(theme::status::DONE))
-                        .child(format!("@{}", account.login)),
-                )
-                .into_any_element(),
+            GitHubState::Connected(account) => {
+                let display_name = account
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| account.login.clone());
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .min_w(px(0.0))
+                    .gap(px(theme::space::SM))
+                    .child(render_avatar(
+                        self.github_avatar.as_ref(),
+                        &account.login,
+                        22.0,
+                    ))
+                    .child(
+                        div()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .text_size(px(theme::font_size::SM))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(theme::color(theme::text::DEFAULT))
+                            .child(display_name),
+                    )
+                    .into_any_element()
+            }
             GitHubState::Checking => sidebar_status_text("Checking GitHub…", theme::text::DIM),
             GitHubState::SignedOut => {
                 sidebar_status_text("Sign in with GitHub", theme::text::MUTED)
@@ -3606,16 +3613,14 @@ impl Forge {
         div()
             .id("profile-view")
             .flex()
-            .flex_1()
             .flex_col()
-            .items_center()
-            .justify_center()
             .size_full()
             .overflow_y_scroll()
-            .p(px(32.0))
+            .p(px(48.0))
             .child(
                 div()
-                    .w(px(480.0))
+                    .w(px(640.0))
+                    .max_w_full()
                     .flex()
                     .flex_col()
                     .gap(px(theme::space::XL))
@@ -3787,14 +3792,87 @@ impl Forge {
             .name
             .clone()
             .unwrap_or_else(|| account.login.clone());
+        let profile_url = format!("https://github.com/{}", account.login);
+
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(theme::space::XL))
+            .child(render_avatar(
+                self.github_avatar.as_ref(),
+                &account.login,
+                88.0,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(theme::space::XXS))
+                    .child(
+                        div()
+                            .text_size(px(24.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme::color(theme::text::DEFAULT))
+                            .child(display_name),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(theme::space::SM))
+                            .child(
+                                div()
+                                    .text_size(px(theme::font_size::MD))
+                                    .text_color(theme::color(theme::text::MUTED))
+                                    .child(account.login.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id("profile-view-on-github")
+                                    .cursor_pointer()
+                                    .text_size(px(theme::font_size::SM))
+                                    .text_color(theme::color(theme::ACCENT))
+                                    .hover(|style| {
+                                        style.text_color(theme::color(theme::accent::HOVER))
+                                    })
+                                    .child("View on GitHub ↗")
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |_, _, _, cx| {
+                                            cx.open_url(&profile_url);
+                                        }),
+                                    ),
+                            ),
+                    ),
+            );
+
+        let account_section = render_profile_section(
+            "ACCOUNT",
+            render_profile_row("GitHub", "Connected".to_string(), true),
+            "Signed in with GitHub's OAuth device authorization flow.",
+        );
+        let git_section = render_profile_section(
+            "GIT INTEGRATION",
+            render_profile_row(
+                "Credential helper",
+                "Active for github.com".to_string(),
+                true,
+            ),
+            "HTTPS Git operations for github.com authenticate through Forge automatically.",
+        );
+        let security_section = render_profile_section(
+            "SECURITY",
+            render_profile_row("Token storage", "macOS Keychain".to_string(), false),
+            "The token is never written to Forge's files or logs.",
+        );
 
         let sign_out = div()
             .id("profile-sign-out")
             .flex()
             .items_center()
             .justify_center()
+            .w(px(160.0))
             .h(px(36.0))
-            .px(px(theme::space::LG))
             .rounded(px(theme::radius::MD))
             .cursor_pointer()
             .border_1()
@@ -3804,6 +3882,7 @@ impl Forge {
             .hover(|style| {
                 style
                     .bg(theme::color(theme::danger::SURFACE))
+                    .border_color(theme::color(theme::danger::BORDER))
                     .text_color(theme::color(theme::status::ERROR))
             })
             .child("Sign out")
@@ -3815,52 +3894,11 @@ impl Forge {
         div()
             .flex()
             .flex_col()
-            .gap(px(theme::space::XL))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(theme::space::LG))
-                    .child(render_avatar(
-                        self.github_avatar.as_ref(),
-                        &account.login,
-                        64.0,
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(theme::space::XXS))
-                            .child(
-                                div()
-                                    .text_size(px(20.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(theme::color(theme::text::DEFAULT))
-                                    .child(display_name),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(theme::font_size::MD))
-                                    .text_color(theme::color(theme::text::MUTED))
-                                    .child(format!("@{}", account.login)),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(theme::space::SM))
-                    .p(px(theme::space::LG))
-                    .rounded(px(theme::radius::MD))
-                    .bg(theme::color(theme::surface::INSET))
-                    .border_1()
-                    .border_color(theme::color(theme::border::SUBTLE))
-                    .text_size(px(theme::font_size::SM))
-                    .text_color(theme::color(theme::text::MUTED))
-                    .child("Connected with GitHub OAuth. The token lives only in your macOS Keychain.")
-                    .child("Git operations over HTTPS for github.com authenticate through Forge's credential helper."),
-            )
+            .gap(px(theme::space::XXL))
+            .child(header)
+            .child(account_section)
+            .child(git_section)
+            .child(security_section)
             .child(sign_out)
             .into_any_element()
     }
@@ -5376,28 +5414,99 @@ fn author_initials(author: &str) -> String {
 /// A round avatar thumbnail, or an initials placeholder while the bitmap is
 /// still loading (or failed to load) — never blocks on the network.
 fn render_avatar(image: Option<&Arc<Image>>, login: &str, size: f32) -> AnyElement {
-    let content = match image {
-        Some(image) => img(image.clone())
+    let radius = px(size / 2.0);
+    match image {
+        Some(image) => div()
             .size(px(size))
-            .object_fit(ObjectFit::Cover)
+            .flex_shrink_0()
+            .overflow_hidden()
+            .rounded(radius)
+            .child(
+                // `window.paint_image` reads corner radii off the `Img`
+                // element's own style, not an ancestor's — the wrapping
+                // div's rounding above is a fallback, this is what actually
+                // clips the bitmap into a circle.
+                img(image.clone())
+                    .size(px(size))
+                    .rounded(radius)
+                    .object_fit(ObjectFit::Cover),
+            )
             .into_any_element(),
         None => div()
             .size(px(size))
+            .flex_shrink_0()
+            .rounded(radius)
             .flex()
             .items_center()
             .justify_center()
             .bg(theme::color(theme::surface::ACTIVE))
             .text_size(px((size * 0.42).max(8.0)))
+            .font_weight(FontWeight::MEDIUM)
             .text_color(theme::color(theme::text::MUTED))
             .child(author_initials(login))
             .into_any_element(),
-    };
+    }
+}
+
+/// A labeled fact card for the Profile page: a bordered section with a dim
+/// uppercase title, one row of content, and a muted caption underneath.
+fn render_profile_section(
+    title: &'static str,
+    row: AnyElement,
+    caption: &'static str,
+) -> AnyElement {
     div()
-        .size(px(size))
-        .flex_shrink_0()
-        .overflow_hidden()
-        .rounded(px(size / 2.0))
-        .child(content)
+        .flex()
+        .flex_col()
+        .gap(px(theme::space::SM))
+        .child(
+            div()
+                .text_size(px(theme::font_size::XS))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme::color(theme::text::DIM))
+                .child(title),
+        )
+        .child(
+            div()
+                .rounded(px(theme::radius::MD))
+                .border_1()
+                .border_color(theme::color(theme::border::SECTION))
+                .bg(theme::color(theme::surface::SECTION))
+                .child(row),
+        )
+        .child(
+            div()
+                .text_size(px(theme::font_size::SM))
+                .text_color(theme::color(theme::text::DIM))
+                .child(caption),
+        )
+        .into_any_element()
+}
+
+fn render_profile_row(label: &'static str, value: String, positive: bool) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .h(px(40.0))
+        .px(px(theme::space::LG))
+        .child(
+            div()
+                .text_size(px(theme::font_size::SM))
+                .text_color(theme::color(theme::text::MUTED))
+                .child(label),
+        )
+        .child(
+            div()
+                .text_size(px(theme::font_size::SM))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(theme::color(if positive {
+                    theme::status::DONE
+                } else {
+                    theme::text::DEFAULT
+                }))
+                .child(value),
+        )
         .into_any_element()
 }
 
