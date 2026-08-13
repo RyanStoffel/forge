@@ -656,7 +656,7 @@ impl Forge {
                 forge.github_state = match result {
                     Ok(github::AccountLookup::Connected(account)) => {
                         let _ = github::complete_onboarding();
-                        forge.refresh_avatar(cx);
+                        forge.refresh_avatar(account.avatar_url.clone(), cx);
                         GitHubState::Connected(account)
                     }
                     Ok(github::AccountLookup::SignedOut) => GitHubState::SignedOut,
@@ -702,6 +702,7 @@ impl Forge {
 
             let shown = this.update(cx, |forge, cx| {
                 forge.github_state = GitHubState::AwaitingDevice(device.clone());
+                cx.write_to_clipboard(ClipboardItem::new_string(device.user_code.clone()));
                 cx.notify();
             });
             if shown.is_err() {
@@ -755,7 +756,7 @@ impl Forge {
                 forge.github_state = match result {
                     Ok(account) => {
                         let _ = github::complete_onboarding();
-                        forge.refresh_avatar(cx);
+                        forge.refresh_avatar(account.avatar_url.clone(), cx);
                         GitHubState::Connected(account)
                     }
                     Err(error) => GitHubState::Failed(error.to_string()),
@@ -794,12 +795,13 @@ impl Forge {
 
     /// Fetches the avatar bitmap for the connected account. Best-effort: a
     /// failure here leaves the initials placeholder rather than blocking or
-    /// disturbing `github_state`.
-    fn refresh_avatar(&mut self, cx: &mut Context<Self>) {
-        let GitHubState::Connected(account) = &self.github_state else {
-            return;
-        };
-        let Some(url) = account.avatar_url.clone() else {
+    /// disturbing `github_state`. Takes the URL directly rather than reading
+    /// it back off `self.github_state`: callers invoke this from inside the
+    /// same `match` expression that is still computing the new
+    /// `github_state` value, so `self.github_state` has not been assigned
+    /// yet at that point.
+    fn refresh_avatar(&mut self, avatar_url: Option<String>, cx: &mut Context<Self>) {
+        let Some(url) = avatar_url else {
             return;
         };
         cx.spawn(async move |this, cx| {
@@ -1846,7 +1848,6 @@ impl Forge {
                 "1" => return self.set_active_view(ViewMode::Terminal, cx),
                 "2" => return self.set_active_view(ViewMode::Editor, cx),
                 "3" => return self.set_active_view(ViewMode::Agents, cx),
-                "4" => return self.set_active_view(ViewMode::Profile, cx),
                 "e" => return self.toggle_primary_view(cx),
                 "d" if ks.modifiers.shift => return self.split_active(Layout::Column, cx),
                 "d" => return self.split_active(Layout::Row, cx),
@@ -2896,14 +2897,6 @@ impl Forge {
                 self.active_view == ViewMode::Agents,
                 cx,
             ),
-            view_tab(
-                "view-profile",
-                "icons/user.svg",
-                "Profile".into(),
-                ViewMode::Profile,
-                self.active_view == ViewMode::Profile,
-                cx,
-            ),
         ];
 
         div()
@@ -3755,7 +3748,7 @@ impl Forge {
                     .line_height(px(21.0))
                     .text_color(theme::color(theme::text::MUTED))
                     .child(format!(
-                        "Forge opened {} — enter the code below to connect your account.",
+                        "Forge opened {} and copied your code to the clipboard — paste it there to connect your account.",
                         device.verification_uri
                     )),
             )

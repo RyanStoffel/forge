@@ -48,7 +48,7 @@ Forge already provides a usable native application shell:
 | Git | Status, staging, commits, branches, fetch/pull/push, stash, discard, diffs, and history graph | Deeper review workflows and remote/PR integration |
 | Processes | Pane-scoped process inspection | Process actions and richer resource history |
 | Agents | Any CLI agent can run in a terminal pane; a dedicated agent surface exists | Structured adapters, attention states, notifications, and task board |
-| GitHub | Native device-flow OAuth sign-in, Keychain token storage, a dedicated Profile tab, and Git credential linking | Issue/PR surfaces linked to workspaces |
+| GitHub | Native device-flow OAuth sign-in, Keychain token storage, a Profile view opened from the sidebar, and Git credential linking | Issue/PR surfaces linked to workspaces |
 | Updates | Signed-checksum edge-release detection with bottom-left prompt; self-installs and restarts for direct binaries, shows a copy-to-clipboard `brew upgrade` notice for the Homebrew app | Signed/notarized app bundles and stable channels |
 
 The central thesis is already testable: terminal work, code editing, project navigation, and Git operations can happen in one fast native window. Agent orchestration and the task board are the next major product layer.
@@ -124,7 +124,7 @@ cd forge
 cargo run -p forge --release
 ```
 
-Forge opens the current directory as its first workspace. On first launch it opens the Profile tab, where you can sign in with GitHub using its native OAuth device flow — no `gh` CLI required. Connecting GitHub is optional; switch to another tab anytime to use Forge without it, and connect later from the Profile tab.
+Forge opens the current directory as its first workspace. On first launch it opens the Profile view, where you can sign in with GitHub using its native OAuth device flow — no `gh` CLI required. Connecting GitHub is optional; click your account in the bottom-left sidebar anytime to open the Profile view again.
 
 ### Core shortcuts
 
@@ -179,6 +179,6 @@ For changes:
 
 Forge executes shells and developer tools with the current user's permissions. Treat commands and agent actions with the same care as commands run directly in a terminal.
 
-GitHub sign-in uses OAuth's device authorization flow directly; the resulting token is stored only in the macOS Keychain and never written to disk or logs. Git operations over HTTPS for github.com authenticate through a credential helper Forge registers on your behalf, reversible from the Profile tab's "Sign out". Updates are downloaded only from this repository's GitHub Release and must match the published SHA-256 digest before installation.
+GitHub sign-in uses OAuth's device authorization flow directly; the resulting token is stored only in the macOS Keychain and never written to disk or logs. Git operations over HTTPS for github.com authenticate through a credential helper Forge registers on your behalf, reversible with "Sign out" in the Profile view (click your account in the bottom-left sidebar to open it). Updates are downloaded only from this repository's GitHub Release and must match the published SHA-256 digest before installation.
 
 Please report security-sensitive findings privately to the repository owner rather than opening a public issue.
